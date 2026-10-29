@@ -12,7 +12,6 @@ import {
     ButtonStyle 
 } from 'discord.js';
 
-// 1. Setup a lightweight Express server for Render's web service health checks
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -24,9 +23,7 @@ app.listen(PORT, () => {
     console.log(`Keep-alive web server listening on port ${PORT}`);
 });
 
-// 2. Setup Discord Gateway Client
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
-
 const activeEvents = new Map();
 
 const commands = [
@@ -68,4 +65,41 @@ function createEventEmbed(title, participants) {
         .setTimestamp();
 }
 
-client.on('interaction
+client.on('interactionCreate', async (interaction) => {
+    if (interaction.isChatInputCommand()) {
+        if (interaction.commandName === 'join') {
+            const eventTitle = interaction.options.getString('event');
+
+            const row = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId('join_event_btn')
+                    .setLabel('Join Event')
+                    .setStyle(ButtonStyle.Success),
+                new ButtonBuilder()
+                    .setCustomId('leave_event_btn')
+                    .setLabel('Leave Event')
+                    .setStyle(ButtonStyle.Danger)
+            );
+
+            const initialEmbed = createEventEmbed(eventTitle, []);
+            const responseMessage = await interaction.reply({
+                embeds: [initialEmbed],
+                components: [row],
+                fetchReply: true
+            });
+
+            activeEvents.set(responseMessage.id, {
+                title: eventTitle,
+                participants: []
+            });
+        }
+    }
+
+    if (interaction.isButton()) {
+        const eventData = activeEvents.get(interaction.message.id);
+
+        if (!eventData) {
+            return interaction.reply({ 
+                content: 'This event post is no longer active.', 
+                ephemeral: true 
+            });
