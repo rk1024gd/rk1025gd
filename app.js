@@ -103,3 +103,28 @@ client.on('interactionCreate', async (interaction) => {
                 content: 'This event post is no longer active.', 
                 ephemeral: true 
             });
+        }
+
+        const userId = interaction.user.id;
+        const userIndex = eventData.participants.findIndex(p => p.id === userId);
+
+        if (interaction.customId === 'join_event_btn') {
+            if (userIndex !== -1) {
+                return interaction.reply({ content: 'You are already in the list!', ephemeral: true });
+            }
+
+            eventData.participants.push({ id: userId, tag: interaction.user.tag });
+            await interaction.update({ embeds: [createEventEmbed(eventData.title, eventData.participants)] });
+        } 
+        else if (interaction.customId === 'leave_event_btn') {
+            if (userIndex === -1) {
+                return interaction.reply({ content: 'You are not in the list!', ephemeral: true });
+            }
+
+            eventData.participants.splice(userIndex, 1);
+            await interaction.update({ embeds: [createEventEmbed(eventData.title, eventData.participants)] });
+        }
+    }
+});
+
+client.login(process.env.DISCORD_TOKEN);
