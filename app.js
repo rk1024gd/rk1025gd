@@ -12,6 +12,7 @@ import {
     ButtonStyle 
 } from 'discord.js';
 
+// 1. Setup Express Keep-Alive Web Server for Render
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -23,40 +24,33 @@ app.listen(PORT, () => {
     console.log(`Keep-alive web server listening on port ${PORT}`);
 });
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+// 2. Initialize Discord Gateway Client
+const client = new Client({ 
+    intents: [
+        GatewayIntentBits.Guilds
+    ] 
+});
+
+// In-memory storage for active event rosters
 const activeEvents = new Map();
 
+// Define slash command safely
 const commands = [
     new SlashCommandBuilder()
         .setName('join')
         .setDescription('Create an event sign-up list')
         .addStringOption(option => 
             option.setName('event')
-                .setDescription('The title/description of the event')
+                .setDescription('The title or description of the event')
                 .setRequired(true)
         )
-];
+].map(command => command.toJSON());
 
-client.once('ready', async () => {
-    console.log(`Logged in as ${client.user.tag}!`);
-
-    const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
-    try {
-        console.log('Registering slash commands...');
-        await rest.put(
-            Routes.applicationCommands(process.env.CLIENT_ID),
-            { body: commands }
-        );
-        console.log('Slash commands registered successfully!');
-    } catch (error) {
-        console.error('Error registering commands:', error);
-    }
-});
-
+// Helper function to build dynamic event embeds
 function createEventEmbed(title, participants) {
     const listText = participants.length > 0 
         ? participants.map((user, index) => `${index + 1}. <@${user.id}>`).join('\n')
-        : '*No participants yet! Click Join below.*';
+        : '*No participants yet! Click "Join Event" below.*';
 
     return new EmbedBuilder()
         .setTitle(`📅 Event: ${title}`)
@@ -65,6 +59,37 @@ function createEventEmbed(title, participants) {
         .setTimestamp();
 }
 
+// 3. Register Slash Commands on Ready (Using Guild ID for instant appearance)
+client.once('ready', async () => {
+    console.log(`Logged in as ${client.user.tag}!`);
+
+    const clientId = process.env.CLIENT_ID || process.env.APP_ID;
+    const token = process.env.DISCORD_TOKEN;
+    const GUILD_ID = '1563759141858705439'; // Replace with your actual server ID if using guild commands
+
+    if (!clientId || !token) {
+        console.error('ERROR: Missing CLIENT_ID or DISCORD_TOKEN in environment variables.');
+        return;
+    }
+
+    const rest = new REST({ version: '10' }).setToken(token);
+    try {
+        console.log('Registering slash commands...');
+        
+        // If you want instant testing, use applicationGuildCommands with your GUILD_ID.
+        // Change to Routes.applicationCommands(clientId) later if you want global commands.
+        await rest.put(
+            Routes.applicationGuildCommands(clientId, GUILD_ID),
+            { body: commands }
+        );
+        
+        console.log('Slash commands registered successfully without form errors!');
+    } catch (error) {
+        console.error('Failed to register slash commands:', error);
+    }
+});
+
+// 4. Handle Interaction Events (Slash Commands & Buttons)
 client.on('interactionCreate', async (interaction) => {
     if (interaction.isChatInputCommand()) {
         if (interaction.commandName === 'join') {
@@ -100,7 +125,7 @@ client.on('interactionCreate', async (interaction) => {
 
         if (!eventData) {
             return interaction.reply({ 
-                content: 'This event post is no longer active.', 
+                content: 'This event sign-up list is no longer active in memory.', 
                 ephemeral: true 
             });
         }
@@ -110,7 +135,7 @@ client.on('interactionCreate', async (interaction) => {
 
         if (interaction.customId === 'join_event_btn') {
             if (userIndex !== -1) {
-                return interaction.reply({ content: 'You are already in the list!', ephemeral: true });
+                return interaction.reply({ content: 'You are already signed up for this event!', ephemeral: true });
             }
 
             eventData.participants.push({ id: userId, tag: interaction.user.tag });
@@ -118,7 +143,7 @@ client.on('interactionCreate', async (interaction) => {
         } 
         else if (interaction.customId === 'leave_event_btn') {
             if (userIndex === -1) {
-                return interaction.reply({ content: 'You are not in the list!', ephemeral: true });
+                return interaction.reply({ content: 'You are not in the participant list!', ephemeral: true });
             }
 
             eventData.participants.splice(userIndex, 1);
