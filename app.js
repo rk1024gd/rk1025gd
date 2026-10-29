@@ -1,71 +1,128 @@
 import 'dotenv/config';
-import express from 'express';
-import {
-  ButtonStyleTypes,
-  InteractionResponseFlags,
-  InteractionResponseType,
-  InteractionType,
-  MessageComponentTypes,
-  verifyKeyMiddleware,
-} from 'discord-interactions';
-import { getRandomEmoji, DiscordRequest } from './utils.js';
-import { getShuffledOptions, getResult } from './game.js';
+import { 
+    Client, 
+    GatewayIntentBits, 
+    REST, 
+    Routes, 
+    SlashCommandBuilder, 
+    EmbedBuilder, 
+    ActionRowBuilder, 
+    ButtonBuilder, 
+    ButtonStyle 
+} from 'discord.js';
 
-// Create an express app
-const app = express();
-// Get port, or default to 3000
-const PORT = process.env.PORT || 3000;
-// To keep track of our active games
-const activeGames = {};
+const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
-/**
- * Interactions endpoint URL where Discord will send HTTP requests
- * Parse request body and verifies incoming requests using discord-interactions package
- */
-app.post('/interactions', verifyKeyMiddleware(process.env.PUBLIC_KEY), async function (req, res) {
-  // Interaction id, type and data
-  const { id, type, data } = req.body;
+// Store active events in memory (Map: messageId -> event object)
+const activeEvents = new Map();
 
-  /**
-   * Handle verification requests
-   */
-  if (type === InteractionType.PING) {
-    return res.send({ type: InteractionResponseType.PONG });
-  }
+// 1. Define the /join command with a title option
+const commands = [
+    new SlashCommandBuilder()
+        .setName('join')
+        .setDescription('Create an event sign-up list')
+        .addStringOption(option => 
+            option.setName('event')
+                .setDescription('The title/description of the event')
+                .setRequired(true)
+        )
+];
 
-  /**
-   * Handle slash command requests
-   * See https://discord.com/developers/docs/interactions/application-commands#slash-commands
-   */
-  if (type === InteractionType.APPLICATION_COMMAND) {
-    const { name } = data;
+// 2. Register slash commands when bot is ready
+client.once('ready', async () => {
+    console.log(`Logged in as ${client.user.tag}!`);
 
-    // "test" command
-    if (name === 'test') {
-      // Send a message into the channel where command was triggered from
-      return res.send({
-        type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
-        data: {
-          flags: InteractionResponseFlags.IS_COMPONENTS_V2,
-          components: [
-            {
-              type: MessageComponentTypes.TEXT_DISPLAY,
-              // Fetches a random emoji to send from a helper function
-              content: `hello world ${getRandomEmoji()}`
-            }
-          ]
-        },
-      });
+    const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
+    try {
+        console.log('Registering slash commands...');
+        await rest.put(
+            Routes.applicationCommands(process.env.CLIENT_ID),
+            { body: commands }
+        );
+        console.log('Slash commands registered successfully!');
+    } catch (error) {
+        console.error('Error registering commands:', error);
+    }
+});
+
+// 3. Helper function to create/update the Event Embed
+function createEventEmbed(title, participants) {
+    const listText = participants.length > 0 
+        ? participants.map((user, index) => `${index + 1}. <@${user.id}>`).join('\n')
+        : '*No participants yet! Click Join below.*';
+
+    return new EmbedBuilder()
+        .setTitle(`📅 Event: ${title}`)
+        .setColor(0x5865F2)
+        .addFields({ name: `Participants (${participants.length})`, value: listText })
+        .setTimestamp();
+}
+
+// 4. Command & Button Handler
+client.on('interactionCreate', async (interaction) => {
+    // Handle /join event:[title]
+    if (interaction.isChatInputCommand()) {
+        if (interaction.commandName === 'join') {
+            const eventTitle = interaction.options.getString('event');
+
+            // Build Join/Leave Buttons
+            const row = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId('join_event_btn')
+                    .setLabel('Join Event')
+                    .setStyle(ButtonStyle.Success),
+                new ButtonBuilder()
+                    .setCustomId('leave_event_btn')
+                    .setLabel('Leave Event')
+                    .setStyle(ButtonStyle.Danger)
+            );
+
+            const initialEmbed = createEventEmbed(eventTitle, []);
+            const responseMessage = await interaction.reply({
+                embeds: [initialEmbed],
+                components: [row],
+                fetchReply: true
+            });
+
+            // Store event details
+            activeEvents.set(responseMessage.id, {
+                title: eventTitle,
+                participants: [] // Array of { id, tag }
+            });
+        }
     }
 
-    console.error(`unknown command: ${name}`);
-    return res.status(400).json({ error: 'unknown command' });
-  }
+    // Handle Button Clicks
+    if (interaction.isButton()) {
+        const eventData = activeEvents.get(interaction.message.id);
 
-  console.error('unknown interaction type', type);
-  return res.status(400).json({ error: 'unknown interaction type' });
+        if (!eventData) {
+            return interaction.reply({ 
+                content: 'This event post is no longer active.', 
+                ephemeral: true 
+            });
+        }
+
+        const userId = interaction.user.id;
+        const userIndex = eventData.participants.findIndex(p => p.id === userId);
+
+        if (interaction.customId === 'join_event_btn') {
+            if (userIndex !== -1) {
+                return interaction.reply({ content: 'You are already in the list!', ephemeral: true });
+            }
+
+            eventData.participants.push({ id: userId, tag: interaction.user.tag });
+            await interaction.update({ embeds: [createEventEmbed(eventData.title, eventData.participants)] });
+        } 
+        else if (interaction.customId === 'leave_event_btn') {
+            if (userIndex === -1) {
+                return interaction.reply({ content: 'You are not in the list!', ephemeral: true });
+            }
+
+            eventData.participants.splice(userIndex, 1);
+            await interaction.update({ embeds: [createEventEmbed(eventData.title, eventData.participants)] });
+        }
+    }
 });
 
-app.listen(PORT, () => {
-  console.log('Listening on port', PORT);
-});
+client.login(process.env.DISCORD_TOKEN);
