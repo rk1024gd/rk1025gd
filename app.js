@@ -34,7 +34,7 @@ const client = new Client({
 // In-memory storage for active event rosters
 const activeEvents = new Map();
 
-// Define slash commands safely
+// Define slash commands safely (without /check)
 const commands = [
     new SlashCommandBuilder()
         .setName('join')
@@ -56,10 +56,7 @@ const commands = [
         ),
     new SlashCommandBuilder()
         .setName('help')
-        .setDescription('Show instructions for using the event bot'),
-    new SlashCommandBuilder()
-        .setName('check')
-        .setDescription('Check active event rosters and details')
+        .setDescription('Show instructions for using the event bot')
 ].map(command => command.toJSON());
 
 // Helper function to build dynamic event embeds
@@ -147,21 +144,9 @@ client.on('interactionCreate', async (interaction) => {
         } 
         else if (interaction.commandName === 'help') {
             await interaction.reply({
-                content: '🤖 **Event Bot Help Menu**\n\n- `/join [event] [time] [description]` : Create a new interactive sign-up event post.\n- `/check` : View a summary of active events running in memory.\n- Click **Join Event** or **Leave Event** on any event post to update your attendance status!',
+                content: '🤖 **Event Bot Help Menu**\n\n- `/join [event] [time] [description]` : Create a new interactive sign-up event post.\n- Click **Join Event** or **Leave Event** on any event post to update your attendance status!',
                 ephemeral: true
             });
-        }
-        else if (interaction.commandName === 'check') {
-            if (activeEvents.size === 0) {
-                return interaction.reply({ content: 'There are currently no active events tracked in memory.', ephemeral: true });
-            }
-
-            let summary = '📋 **Active Events Summary:**\n';
-            for (const [msgId, data] of activeEvents.entries()) {
-                summary += `- **${data.title}** at *${data.time}* (${data.participants.length} participants)\n`;
-            }
-
-            await interaction.reply({ content: summary, ephemeral: true });
         }
     }
 
