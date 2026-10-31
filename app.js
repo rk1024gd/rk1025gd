@@ -34,29 +34,54 @@ const client = new Client({
 // In-memory storage for active event rosters
 const activeEvents = new Map();
 
-// Define slash command safely
+// Define slash commands safely
 const commands = [
     new SlashCommandBuilder()
         .setName('join')
         .setDescription('Create an event sign-up list')
         .addStringOption(option => 
             option.setName('event')
-                .setDescription('The title or description of the event')
+                .setDescription('The title of the event')
                 .setRequired(true)
         )
+        .addStringOption(option => 
+            option.setName('time')
+                .setDescription('The time of the event (e.g., 8:00 PM EST)')
+                .setRequired(true)
+        )
+        .addStringOption(option => 
+            option.setName('description')
+                .setDescription('Additional details about the event')
+                .setRequired(false)
+        ),
+    new SlashCommandBuilder()
+        .setName('help')
+        .setDescription('Show instructions for using the event bot'),
+    new SlashCommandBuilder()
+        .setName('check')
+        .setDescription('Check active event rosters and details')
 ].map(command => command.toJSON());
 
 // Helper function to build dynamic event embeds
-function createEventEmbed(title, participants) {
+function createEventEmbed(title, time, description, participants) {
     const listText = participants.length > 0 
         ? participants.map((user, index) => `${index + 1}. <@${user.id}>`).join('\n')
         : '*No participants yet! Click "Join Event" below.*';
 
-    return new EmbedBuilder()
+    const embed = new EmbedBuilder()
         .setTitle(`📅 Event: ${title}`)
         .setColor(0x5865F2)
-        .addFields({ name: `Participants (${participants.length})`, value: listText })
+        .addFields(
+            { name: '🕒 Time', value: time, inline: false },
+            { name: `Participants (${participants.length})`, value: listText, inline: false }
+        )
         .setTimestamp();
+
+    if (description) {
+        embed.setDescription(description);
+    }
+
+    return embed;
 }
 
 // 3. Register Slash Commands on Ready (Using Guild ID for instant appearance)
@@ -65,7 +90,7 @@ client.once('ready', async () => {
 
     const clientId = process.env.CLIENT_ID || process.env.APP_ID;
     const token = process.env.DISCORD_TOKEN;
-    const GUILD_ID = '1563759141858705439'; // Replace with your actual server ID if using guild commands
+    const GUILD_ID = '1563759141858705439'; // Replace with your actual server ID
 
     if (!clientId || !token) {
         console.error('ERROR: Missing CLIENT_ID or DISCORD_TOKEN in environment variables.');
@@ -76,14 +101,12 @@ client.once('ready', async () => {
     try {
         console.log('Registering slash commands...');
         
-        // If you want instant testing, use applicationGuildCommands with your GUILD_ID.
-        // Change to Routes.applicationCommands(clientId) later if you want global commands.
         await rest.put(
             Routes.applicationGuildCommands(clientId, GUILD_ID),
             { body: commands }
         );
         
-        console.log('Slash commands registered successfully without form errors!');
+        console.log('Slash commands registered successfully!');
     } catch (error) {
         console.error('Failed to register slash commands:', error);
     }
@@ -94,6 +117,8 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.isChatInputCommand()) {
         if (interaction.commandName === 'join') {
             const eventTitle = interaction.options.getString('event');
+            const eventTime = interaction.options.getString('time');
+            const eventDesc = interaction.options.getString('description') || null;
 
             const row = new ActionRowBuilder().addComponents(
                 new ButtonBuilder()
@@ -106,7 +131,7 @@ client.on('interactionCreate', async (interaction) => {
                     .setStyle(ButtonStyle.Danger)
             );
 
-            const initialEmbed = createEventEmbed(eventTitle, []);
+            const initialEmbed = createEventEmbed(eventTitle, eventTime, eventDesc, []);
             const responseMessage = await interaction.reply({
                 embeds: [initialEmbed],
                 components: [row],
@@ -115,8 +140,28 @@ client.on('interactionCreate', async (interaction) => {
 
             activeEvents.set(responseMessage.id, {
                 title: eventTitle,
+                time: eventTime,
+                description: eventDesc,
                 participants: []
             });
+        } 
+        else if (interaction.commandName === 'help') {
+            await interaction.reply({
+                content: '🤖 **Event Bot Help Menu**\n\n- `/join [event] [time] [description]` : Create a new interactive sign-up event post.\n- `/check` : View a summary of active events running in memory.\n- Click **Join Event** or **Leave Event** on any event post to update your attendance status!',
+                ephemeral: true
+            });
+        }
+        else if (interaction.commandName === 'check') {
+            if (activeEvents.size === 0) {
+                return interaction.reply({ content: 'There are currently no active events tracked in memory.', ephemeral: true });
+            }
+
+            let summary = '📋 **Active Events Summary:**\n';
+            for (const [msgId, data] of activeEvents.entries()) {
+                summary += `- **${data.title}** at *${data.time}* (${data.participants.length} participants)\n`;
+            }
+
+            await interaction.reply({ content: summary, ephemeral: true });
         }
     }
 
@@ -139,7 +184,7 @@ client.on('interactionCreate', async (interaction) => {
             }
 
             eventData.participants.push({ id: userId, tag: interaction.user.tag });
-            await interaction.update({ embeds: [createEventEmbed(eventData.title, eventData.participants)] });
+            await interaction.update({ embeds: [createEventEmbed(eventData.title, eventData.time, eventData.description, eventData.participants)] });
         } 
         else if (interaction.customId === 'leave_event_btn') {
             if (userIndex === -1) {
@@ -147,7 +192,7 @@ client.on('interactionCreate', async (interaction) => {
             }
 
             eventData.participants.splice(userIndex, 1);
-            await interaction.update({ embeds: [createEventEmbed(eventData.title, eventData.participants)] });
+            await interaction.update({ embeds: [createEventEmbed(eventData.title, eventData.time, eventData.description, eventData.participants)] });
         }
     }
 });
